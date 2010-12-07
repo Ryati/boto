@@ -389,11 +389,15 @@ class S3Connection(AWSAuthConnection):
         if isinstance(key, Key):
             key = key.name
         path = self.calling_format.build_path_base(bucket, key)
+        boto.log.debug('path=%s' % path)
         auth_path = self.calling_format.build_auth_path(bucket, key)
+        boto.log.debug('auth_path=%s' % auth_path)
         host = self.calling_format.build_host(self.server_name(), bucket)
         if query_args:
             path += '?' + query_args
+            boto.log.debug('path=%s' % path)
             auth_path += '?' + query_args
+            boto.log.debug('auth_path=%s' % auth_path)
         return AWSAuthConnection.make_request(self, method, path, headers,
                 data, host, auth_path, sender,
                 override_num_retries=override_num_retries)

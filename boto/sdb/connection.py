@@ -56,13 +56,18 @@ class SDBConnection(AWSQueryConnection):
     def __init__(self, aws_access_key_id=None, aws_secret_access_key=None,
                  is_secure=True, port=None, proxy=None, proxy_port=None,
                  proxy_user=None, proxy_pass=None, debug=0,
-                 https_connection_factory=None, region=None, path='/', converter=None):
+                 https_connection_factory=None, region=None, path='/',
+                 converter=None):
         if not region:
-            region = SDBRegionInfo(self, self.DefaultRegionName, self.DefaultRegionEndpoint)
+            region = SDBRegionInfo(self, self.DefaultRegionName,
+                                   self.DefaultRegionEndpoint)
         self.region = region
-        AWSQueryConnection.__init__(self, aws_access_key_id, aws_secret_access_key,
-                                    is_secure, port, proxy, proxy_port, proxy_user, proxy_pass,
-                                    self.region.endpoint, debug, https_connection_factory, path)
+        AWSQueryConnection.__init__(self, aws_access_key_id,
+                                    aws_secret_access_key,
+                                    is_secure, port, proxy,
+                                    proxy_port, proxy_user, proxy_pass,
+                                    self.region.endpoint, debug,
+                                    https_connection_factory, path)
         self.box_usage = 0.0
         self.converter = converter
         self.item_cls = Item
@@ -104,34 +109,34 @@ class SDBConnection(AWSQueryConnection):
         else:
             params['Expected.1.Value'] = expected_value[1]
             
-
     def build_batch_list(self, params, items, replace=False):
         item_names = items.keys()
         i = 0
         for item_name in item_names:
+            params['Item.%d.ItemName' % i] = item_name
             j = 0
             item = items[item_name]
-            attr_names = item.keys()
-            params['Item.%d.ItemName' % i] = item_name
-            for attr_name in attr_names:
-                value = item[attr_name]
-                if isinstance(value, list):
-                    for v in value:
-                        if self.converter:
-                            v = self.converter.encode(v)
+            if item is not None:
+                attr_names = item.keys()
+                for attr_name in attr_names:
+                    value = item[attr_name]
+                    if isinstance(value, list):
+                        for v in value:
+                            if self.converter:
+                                v = self.converter.encode(v)
+                            params['Item.%d.Attribute.%d.Name' % (i,j)] = attr_name
+                            params['Item.%d.Attribute.%d.Value' % (i,j)] = v
+                            if replace:
+                                params['Item.%d.Attribute.%d.Replace' % (i,j)] = 'true'
+                            j += 1
+                    else:
                         params['Item.%d.Attribute.%d.Name' % (i,j)] = attr_name
-                        params['Item.%d.Attribute.%d.Value' % (i,j)] = v
+                        if self.converter:
+                            value = self.converter.encode(value)
+                        params['Item.%d.Attribute.%d.Value' % (i,j)] = value
                         if replace:
                             params['Item.%d.Attribute.%d.Replace' % (i,j)] = 'true'
                         j += 1
-                else:
-                    params['Item.%d.Attribute.%d.Name' % (i,j)] = attr_name
-                    if self.converter:
-                        value = self.converter.encode(value)
-                    params['Item.%d.Attribute.%d.Value' % (i,j)] = value
-                    if replace:
-                        params['Item.%d.Attribute.%d.Replace' % (i,j)] = 'true'
-                    j += 1
             i += 1
 
     def build_name_list(self, params, attribute_names):
@@ -152,7 +157,8 @@ class SDBConnection(AWSQueryConnection):
 
     def print_usage(self):
         """
-        Print the BoxUsage and approximate costs of all requests made on this connection.
+        Print the BoxUsage and approximate costs of all requests made on
+        this connection.
         """
         print 'Total Usage: %f compute seconds' % self.box_usage
         cost = self.box_usage * 0.14
@@ -250,7 +256,8 @@ class SDBConnection(AWSQueryConnection):
         :param domain_or_name: Either the name of a domain or a Domain object
         
         :type item_name: string
-        :param item_name: The name of the item whose attributes are being stored.
+        :param item_name: The name of the item whose attributes are being
+                          stored.
         
         :type attribute_names: dict or dict-like object
         :param attribute_names: The name/value pairs to store as attributes
@@ -326,19 +333,21 @@ class SDBConnection(AWSQueryConnection):
         :param domain_or_name: Either the name of a domain or a Domain object
 
         :type item_name: string
-        :param item_name: The name of the item whose attributes are being retrieved.
+        :param item_name: The name of the item whose attributes are being
+                          retrieved.
 
         :type attribute_names: string or list of strings
-        :param attribute_names: An attribute name or list of attribute names.  This
-                                parameter is optional.  If not supplied, all attributes
-                                will be retrieved for the item.
+        :param attribute_names: An attribute name or list of attribute names.
+                                This parameter is optional.  If not supplied,
+                                all attributes will be retrieved for the item.
 
         :type consistent_read: bool
         :param consistent_read: When set to true, ensures that the most recent
                                 data is returned.
 
         :rtype: :class:`boto.sdb.item.Item`
-        :return: An Item mapping type containing the requested attribute name/values
+        :return: An Item mapping type containing the requested attribute
+                 name/values
         """
         domain, domain_name = self.get_domain_and_name(domain_or_name)
         params = {'DomainName' : domain_name,
@@ -369,14 +378,17 @@ class SDBConnection(AWSQueryConnection):
         :param domain_or_name: Either the name of a domain or a Domain object
 
         :type item_name: string
-        :param item_name: The name of the item whose attributes are being deleted.
+        :param item_name: The name of the item whose attributes are being
+                          deleted.
 
         :type attributes: dict, list or :class:`boto.sdb.item.Item`
-        :param attributes: Either a list containing attribute names which will cause
-                           all values associated with that attribute name to be deleted or
-                           a dict or Item containing the attribute names and keys and list
-                           of values to delete as the value.  If no value is supplied,
-                           all attribute name/values for the item will be deleted.
+        :param attributes: Either a list containing attribute names which
+                           will cause all values associated with that attribute
+                           name to be deleted or a dict or Item containing the
+                           attribute names and keys and list of values to
+                           delete as the value.  If no value is supplied,
+                           all attribute name/values for the item will be
+                           deleted.
                            
         :type expected_value: list
         :param expected_value: If supplied, this is a list or tuple consisting
@@ -412,17 +424,43 @@ class SDBConnection(AWSQueryConnection):
             self.build_expected_value(params, expected_value)
         return self.get_status('DeleteAttributes', params)
         
+    def batch_delete_attributes(self, domain_or_name, items):
+        """
+        Delete multiple items in a domain.
+        
+        :type domain_or_name: string or :class:`boto.sdb.domain.Domain` object.
+        :param domain_or_name: Either the name of a domain or a Domain object
+
+        :type items: dict or dict-like object
+        :param items: A dictionary-like object.  The keys of the dictionary are
+                      the item names and the values are either:
+
+                      * dictionaries of attribute names/values, exactly the
+                        same as the attribute_names parameter of the scalar
+                        put_attributes call.  The attribute name/value pairs
+                        will only be deleted if they match the name/value
+                        pairs passed in.
+                      * None which means that all attributes associated
+                        with the item should be deleted.  
+
+        :return: True if successful
+        """
+        domain, domain_name = self.get_domain_and_name(domain_or_name)
+        params = {'DomainName' : domain_name}
+        self.build_batch_list(params, items, False)
+        return self.get_status('BatchDeleteAttributes', params, verb='POST')
+
     def select(self, domain_or_name, query='', next_token=None,
                consistent_read=False):
         """
-        Returns a set of Attributes for item names within domain_name that match the query.
-        The query must be expressed in using the SELECT style syntax rather than the
-        original SimpleDB query language.
-        Even though the select request does not require a domain object, a domain
-        object must be passed into this method so the Item objects returned can
-        point to the appropriate domain.
+        Returns a set of Attributes for item names within domain_name that
+        match the query.  The query must be expressed in using the SELECT
+        style syntax rather than the original SimpleDB query language.
+        Even though the select request does not require a domain object,
+        a domain object must be passed into this method so the Item objects
+        returned can point to the appropriate domain.
         
-        :type domain_or_name: string or :class:`boto.sdb.domain.Domain` object.
+        :type domain_or_name: string or :class:`boto.sdb.domain.Domain` object
         :param domain_or_name: Either the name of a domain or a Domain object
 
         :type query: string

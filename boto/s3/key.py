@@ -439,7 +439,11 @@ class Key(object):
             for key in headers:
                 http_conn.putheader(key, headers[key])
             http_conn.endheaders()
-            fp.seek(0)
+            try:
+                fp.seek(0)
+            except:
+                # Might not be a file you can seek
+                pass
             save_debug = self.bucket.connection.debug
             self.bucket.connection.debug = 0
             http_conn.set_debuglevel(0)
@@ -466,7 +470,11 @@ class Key(object):
                 cb(total_bytes, self.size)
             response = http_conn.getresponse()
             body = response.read()
-            fp.seek(0)
+            try:
+                fp.seek(0)
+            except:
+                # Might not be able to seek
+                pass
             http_conn.set_debuglevel(save_debug)
             self.bucket.connection.debug = save_debug
             if response.status == 500 or response.status == 503 or \
@@ -537,7 +545,7 @@ class Key(object):
 
     def set_contents_from_file(self, fp, headers=None, replace=True,
                                cb=None, num_cb=10, policy=None, md5=None,
-                               reduced_redundancy=False):
+                               reduced_redundancy=False, size=None):
         """
         Store an object in S3 using the name of the Key object as the
         key in S3 and the contents of the file pointed to by 'fp' as the
@@ -604,9 +612,12 @@ class Key(object):
                 md5 = self.compute_md5(fp)
             else:
                 # even if md5 is provided, still need to set size of content
-                fp.seek(0, 2)
-                self.size = fp.tell()
-                fp.seek(0)
+                if size is None:
+                    fp.seek(0, 2)
+                    self.size = fp.tell()
+                    fp.seek(0)
+                else:
+                    self.size = size
             self.md5 = md5[0]
             self.base64md5 = md5[1]
             if self.name == None:

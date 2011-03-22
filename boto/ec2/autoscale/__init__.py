@@ -24,6 +24,7 @@ This module provides an interface to the Elastic Compute Cloud (EC2)
 Auto Scaling service.
 """
 
+import base64
 import boto
 from boto.connection import AWSQueryConnection
 from boto.ec2.regioninfo import RegionInfo
@@ -33,14 +34,50 @@ from boto.ec2.autoscale.launchconfig import LaunchConfiguration
 from boto.ec2.autoscale.group import AutoScalingGroup
 from boto.ec2.autoscale.activity import Activity
 
+RegionData = {
+    'us-east-1' : 'autoscaling.us-east-1.amazonaws.com',
+    'us-west-1' : 'autoscaling.us-west-1.amazonaws.com',
+    'eu-west-1' : 'autoscaling.eu-west-1.amazonaws.com',
+    'ap-southeast-1' : 'autoscaling.ap-southeast-1.amazonaws.com'}
+
+def regions():
+    """
+    Get all available regions for the Auto Scaling service.
+
+    :rtype: list
+    :return: A list of :class:`boto.RegionInfo` instances
+    """
+    regions = []
+    for region_name in RegionData:
+        region = RegionInfo(name=region_name,
+                            endpoint=RegionData[region_name],
+                            connection_cls=AutoScaleConnection)
+        regions.append(region)
+    return regions
+
+def connect_to_region(region_name, **kw_params):
+    """
+    Given a valid region name, return a
+    :class:`boto.ec2.autoscale.AutoScaleConnection`.
+
+    :param str region_name: The name of the region to connect to.
+
+    :rtype: :class:`boto.ec2.AutoScaleConnection` or ``None``
+    :return: A connection to the given region, or None if an invalid region
+        name is given
+    """
+    for region in regions():
+        if region.name == region_name:
+            return region.connect(**kw_params)
+    return None
+
 
 class AutoScaleConnection(AWSQueryConnection):
-    APIVersion = boto.config.get('Boto', 'autoscale_version', '2009-05-15')
+    APIVersion = boto.config.get('Boto', 'autoscale_version', '2010-08-01')
     Endpoint = boto.config.get('Boto', 'autoscale_endpoint',
                                'autoscaling.amazonaws.com')
     DefaultRegionName = 'us-east-1'
     DefaultRegionEndpoint = 'autoscaling.amazonaws.com'
-    SignatureVersion = '2'
 
     def __init__(self, aws_access_key_id=None, aws_secret_access_key=None,
                  is_secure=True, port=None, proxy=None, proxy_port=None,
@@ -63,6 +100,9 @@ class AutoScaleConnection(AWSQueryConnection):
                                     proxy_user, proxy_pass,
                                     self.region.endpoint, debug,
                                     https_connection_factory, path=path)
+
+    def _required_auth_capability(self):
+        return ['ec2']
 
     def build_list_params(self, params, items, label):
         """ items is a list of dictionaries or strings:
@@ -120,7 +160,7 @@ class AutoScaleConnection(AWSQueryConnection):
                   'InstanceType'            : launch_config.instance_type,
                  }
         if launch_config.user_data:
-            params['UserData'] = launch_config.user_data
+            params['UserData'] = base64.b64encode(launch_config.user_data)
         if launch_config.kernel_id:
             params['KernelId'] = launch_config.kernel_id
         if launch_config.ramdisk_id:
@@ -131,7 +171,7 @@ class AutoScaleConnection(AWSQueryConnection):
         self.build_list_params(params, launch_config.security_groups,
                                'SecurityGroups')
         return self.get_object('CreateLaunchConfiguration', params,
-                                  Request)
+                                  Request, verb='POST')
 
     def create_trigger(self, trigger):
         """
@@ -210,4 +250,33 @@ class AutoScaleConnection(AWSQueryConnection):
                   }
         return self.get_object('TerminateInstanceInAutoScalingGroup', params,
                                Activity)
+
+    def set_instance_health(self, instance_id, health_status,
+                            should_respect_grace_period=True):
+        """
+        Explicitly set the health status of an instance.
+
+        :type instance_id: str
+        :param instance_id: The identifier of the EC2 instance.
+
+        :type health_status: str
+        :param health_status: The health status of the instance.
+                              "Healthy" means that the instance is
+                              healthy and should remain in service.
+                              "Unhealthy" means that the instance is
+                              unhealthy. Auto Scaling should terminate
+                              and replace it.
+
+        :type should_respect_grace_period: bool
+        :param should_respect_grace_period: If True, this call should
+                                            respect the grace period
+                                            associated with the group.
+        """
+        params = {'InstanceId' : instance_id,
+                  'HealthStatus' : health_status}
+        if should_respect_grace_period:
+            params['ShouldRespectGracePeriod'] = 'true'
+        else:
+            params['ShouldRespectGracePeriod'] = 'false'
+        return self.get_status('SetInstanceHealth', params)
 

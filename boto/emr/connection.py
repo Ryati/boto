@@ -57,6 +57,9 @@ class EmrConnection(AWSQueryConnection):
                                     self.region.endpoint, debug,
                                     https_connection_factory, path)
 
+    def _required_auth_capability(self):
+        return ['emr']
+
     def describe_jobflow(self, jobflow_id):
         """
         Describes a single Elastic MapReduce job flow
@@ -245,7 +248,7 @@ class EmrConnection(AWSQueryConnection):
         params = {}
         for i, bootstrap_action in enumerate(bootstrap_actions):
             for key, value in bootstrap_action.iteritems():
-                params['BootstrapActions.memeber.%s.%s' % (i + 1, key)] = value
+                params['BootstrapActions.member.%s.%s' % (i + 1, key)] = value
         return params
 
     def _build_step_list(self, steps):
@@ -255,7 +258,7 @@ class EmrConnection(AWSQueryConnection):
         params = {}
         for i, step in enumerate(steps):
             for key, value in step.iteritems():
-                params['Steps.memeber.%s.%s' % (i+1, key)] = value
+                params['Steps.member.%s.%s' % (i+1, key)] = value
         return params
 
     def _build_instance_args(self, ec2_keyname, availability_zone, master_instance_type,

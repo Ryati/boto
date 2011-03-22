@@ -323,7 +323,7 @@ class _EC2Error:
 
 class SDBResponseError(BotoServerError):
     """
-    Error in respones from SDB.
+    Error in responses from SDB.
     """
     pass
 
@@ -368,6 +368,21 @@ class InvalidAclError(Exception):
         Exception.__init__(self)
         self.message = message
 
+class NoAuthHandlerFound(Exception):
+    """Is raised when no auth handlers were found ready to authenticate."""
+    pass
+
+class TooManyAuthHandlerReadyToAuthenticate(Exception):
+    """Is raised when there are more than one auth handler ready.
+
+    In normal situation there should only be one auth handler that is ready to
+    authenticate. In case where more than one auth handler is ready to
+    authenticate, we raise this exception, to prevent unpredictable behavior
+    when multiple auth handlers can handle a particular case and the one chosen
+    depends on the order they were checked.
+    """
+    pass
+
 # Enum class for resumable upload failure disposition.
 class ResumableTransferDisposition(object):
     # START_OVER means an attempt to resume an existing transfer failed,
@@ -375,11 +390,21 @@ class ResumableTransferDisposition(object):
     START_OVER = 'START_OVER'
 
     # WAIT_BEFORE_RETRY means the resumable transfer failed but that it can
-    # be retried after a time delay.
+    # be retried after a time delay within the current process.
     WAIT_BEFORE_RETRY = 'WAIT_BEFORE_RETRY'
 
-    # ABORT means the resumable transfer failed and that delaying/retrying
-    # within the current process will not help.
+    # ABORT_CUR_PROCESS means the resumable transfer failed and that
+    # delaying/retrying within the current process will not help. If
+    # resumable transfer included a state tracker file the upload can be
+    # retried again later, in another process (e.g., a later run of gsutil).
+    ABORT_CUR_PROCESS = 'ABORT_CUR_PROCESS'
+
+    # ABORT means the resumable transfer failed in a way that it does not
+    # make sense to continue in the current process, and further that the 
+    # current tracker ID should not be preserved (in a tracker file if one
+    # was specified at resumable upload start time). If the user tries again
+    # later (e.g., a separate run of gsutil) it will get a new resumable
+    # upload ID.
     ABORT = 'ABORT'
 
 class ResumableUploadException(Exception):

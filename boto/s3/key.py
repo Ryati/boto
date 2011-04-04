@@ -389,7 +389,7 @@ class Key(object):
         return self.bucket.set_canned_acl('public-read', self.name, headers)
 
     def generate_url(self, expires_in, method='GET', headers=None,
-                     query_auth=True, force_http=False):
+                     query_auth=True, force_http=False, parameters=None):
         """
         Generate a URL to access this key.
         
@@ -410,7 +410,7 @@ class Key(object):
         """
         return self.bucket.connection.generate_url(expires_in, method,
                                                    self.bucket.name, self.name,
-                                                   headers, query_auth, force_http)
+                                                   headers, query_auth, force_http, parameters)
 
     def send_file(self, fp, headers=None, cb=None, num_cb=10, query_args=None):
         """

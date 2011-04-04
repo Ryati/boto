@@ -262,14 +262,16 @@ class S3Connection(AWSAuthConnection):
 
 
     def generate_url(self, expires_in, method, bucket='', key='',
-                     headers=None, query_auth=True, force_http=False):
+                     headers=None, query_auth=True, force_http=False, parameters=None):
         if not headers:
             headers = {}
+        if parameters is None:
+            parameters = {}
         expires = int(time.time() + expires_in)
         auth_path = self.calling_format.build_auth_path(bucket, key)
         auth_path = self.get_path(auth_path)
         c_string = boto.utils.canonical_string(method, auth_path, headers,
-                                               expires, self.provider)
+                                               expires, self.provider, parameters)
         b64_hmac = self._auth_handler.sign_string(c_string)
         encoded_canonical = urllib.quote_plus(b64_hmac)
         self.calling_format.build_path_base(bucket, key)
@@ -277,6 +279,7 @@ class S3Connection(AWSAuthConnection):
             query_part = '?' + self.QueryString % (encoded_canonical, expires,
                                                    self.aws_access_key_id)
             hdrs = [ '%s=%s'%(name, urllib.quote(val)) for name,val in headers.items() ]
+            hdrs.extend(['%s=%s'%(name, urllib.quote(val)) for name,val in parameters.items()])
             q_str = '&'.join(hdrs)
             if q_str:
                 query_part += '&' + q_str

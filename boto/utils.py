@@ -73,7 +73,7 @@ qsa_of_interest = ['acl', 'location', 'logging', 'partNumber', 'policy',
 
 # generates the aws canonical string for the given parameters
 def canonical_string(method, path, headers, expires=None,
-                     provider=None):
+                     provider=None, parameters=None):
     if not provider:
         provider = boto.provider.get_default()
     interesting_headers = {}
@@ -113,16 +113,22 @@ def canonical_string(method, path, headers, expires=None,
     # unless it is one of the QSA of interest, defined above
     t =  path.split('?')
     buf += t[0]
-
+    
     if len(t) > 1:
         qsa = t[1].split('&')
         qsa = [ a.split('=') for a in qsa]
         qsa = [ a for a in qsa if a[0] in qsa_of_interest ]
-        if len(qsa) > 0:
-            qsa.sort(cmp=lambda x,y:cmp(x[0], y[0]))
-            qsa = [ '='.join(a) for a in qsa ]
-            buf += '?'
-            buf += '&'.join(qsa)
+    else:
+        qsa = []
+
+    if parameters is not None:
+        qsa.extend(parameters.iteritems())
+
+    if len(qsa) > 0:
+        qsa.sort(cmp=lambda x,y:cmp(x[0], y[0]))
+        qsa = [ '='.join(a) for a in qsa ]
+        buf += '?'
+        buf += '&'.join(qsa)
 
     return buf
 

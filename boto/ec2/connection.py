@@ -55,7 +55,7 @@ from boto.exception import EC2ResponseError
 
 class EC2Connection(AWSQueryConnection):
 
-    APIVersion = boto.config.get('Boto', 'ec2_version', '2010-08-31')
+    APIVersion = boto.config.get('Boto', 'ec2_version', '2011-01-01')
     DefaultRegionName = boto.config.get('Boto', 'ec2_region_name', 'us-east-1')
     DefaultRegionEndpoint = boto.config.get('Boto', 'ec2_region_endpoint',
                                             'ec2.amazonaws.com')
@@ -64,7 +64,8 @@ class EC2Connection(AWSQueryConnection):
     def __init__(self, aws_access_key_id=None, aws_secret_access_key=None,
                  is_secure=True, host=None, port=None, proxy=None, proxy_port=None,
                  proxy_user=None, proxy_pass=None, debug=0,
-                 https_connection_factory=None, region=None, path='/'):
+                 https_connection_factory=None, region=None, path='/',
+                 api_version=None):
         """
         Init method to create a new connection to EC2.
 
@@ -81,6 +82,8 @@ class EC2Connection(AWSQueryConnection):
                                     proxy_user, proxy_pass,
                                     self.region.endpoint, debug,
                                     https_connection_factory, path)
+        if api_version:
+            self.APIVersion = api_version
 
     def _required_auth_capability(self):
         return ['ec2']
@@ -507,12 +510,9 @@ class EC2Connection(AWSQueryConnection):
 
         :type instance_initiated_shutdown_behavior: string
         :param instance_initiated_shutdown_behavior: Specifies whether the
-                                                     instance's EBS volumes are
-                                                     stopped (i.e. detached) or
-                                                     terminated (i.e. deleted)
-                                                     when the instance is
-                                                     shutdown by the
-                                                     owner.  Valid values are:
+                                                     instance stops or terminates on
+                                                     instance-initiated shutdown.
+                                                     Valid values are:
                                                      
                                                      * stop
                                                      * terminate
@@ -1392,7 +1392,8 @@ class EC2Connection(AWSQueryConnection):
                 temp.append(t)
 
         target_backup_times = temp
-        target_backup_times.reverse() # make the oldest date first
+        target_backup_times.sort() # make the oldeest dates first, and make sure the month start and last four week's
+                                   # start are in the proper order
 
         # get all the snapshots, sort them by date and time, and organize them into one array for each volume:
         all_snapshots = self.get_all_snapshots(owner = 'self')

@@ -39,6 +39,45 @@ from boto.ec2.autoscale.instance import Instance
 from boto.ec2.autoscale.scheduled import ScheduledUpdateGroupAction
 
 
+RegionData = {
+    'us-east-1' : 'autoscaling.us-east-1.amazonaws.com',
+    'us-west-1' : 'autoscaling.us-west-1.amazonaws.com',
+    'eu-west-1' : 'autoscaling.eu-west-1.amazonaws.com',
+    'ap-northeast-1' : 'autoscaling.ap-northeast-1.amazonaws.com',
+    'ap-southeast-1' : 'autoscaling.ap-southeast-1.amazonaws.com'}
+
+def regions():
+    """
+    Get all available regions for the Auto Scaling service.
+
+    :rtype: list
+    :return: A list of :class:`boto.RegionInfo` instances
+    """
+    regions = []
+    for region_name in RegionData:
+        region = RegionInfo(name=region_name,
+                            endpoint=RegionData[region_name],
+                            connection_cls=AutoScaleConnection)
+        regions.append(region)
+    return regions
+
+def connect_to_region(region_name, **kw_params):
+    """
+    Given a valid region name, return a
+    :class:`boto.ec2.autoscale.AutoScaleConnection`.
+
+    :param str region_name: The name of the region to connect to.
+
+    :rtype: :class:`boto.ec2.AutoScaleConnection` or ``None``
+    :return: A connection to the given region, or None if an invalid region
+        name is given
+    """
+    for region in regions():
+        if region.name == region_name:
+            return region.connect(**kw_params)
+    return None
+
+
 class AutoScaleConnection(AWSQueryConnection):
     APIVersion = boto.config.get('Boto', 'autoscale_version', '2010-08-01')
     DefaultRegionEndpoint = boto.config.get('Boto', 'autoscale_endpoint',
@@ -101,10 +140,10 @@ class AutoScaleConnection(AWSQueryConnection):
             params['DesiredCapacity'] = as_group.desired_capacity
         if as_group.vpc_zone_identifier:
             params['VPCZoneIdentifier'] = as_group.vpc_zone_identifier
-        if as_group.healthcheck_grace_period:
-            params['HealthCheckGracePeriod'] = as_group.healthcheck_grace_period
-        if as_group.healthcheck_type:
-            params['HealthCheckType'] = as_group.healthcheck_type
+        if as_group.health_check_period:
+            params['HealthCheckGracePeriod'] = as_group.health_check_period
+        if as_group.health_check_type:
+            params['HealthCheckType'] = as_group.health_check_type
         if as_group.default_cooldown:
             params['DefaultCooldown'] = as_group.default_cooldown
         if as_group.placement_group:
@@ -177,7 +216,7 @@ class AutoScaleConnection(AWSQueryConnection):
         if scaling_policy.cooldown is not None:
             params['Cooldown'] = scaling_policy.cooldown
 
-        return self.get_object('PutScalingPolicy', params)
+        return self.get_object('PutScalingPolicy', params, Request)
 
     def delete_launch_configuration(self, launch_config_name):
         """
@@ -188,8 +227,7 @@ class AutoScaleConnection(AWSQueryConnection):
         longer available for use.
         """
         params = {'LaunchConfigurationName' : launch_config_name}
-        return self.connection.get_object('DeleteLaunchConfiguration', params,
-                                          Request)
+        return self.get_object('DeleteLaunchConfiguration', params, Request)
 
     def get_all_groups(self, names=None, max_records=None, next_token=None):
         """
@@ -235,6 +273,10 @@ class AutoScaleConnection(AWSQueryConnection):
         :type max_records: int
         :param max_records: Maximum amount of configurations to return.
 
+        :type next_token: str
+        :param next_token: If you have more results than can be returned at once, pass in this
+                           parameter to page through all results.
+
         :rtype: list
         :returns: List of :class:`boto.ec2.autoscale.launchconfig.LaunchConfiguration` instances.
         """
@@ -245,6 +287,9 @@ class AutoScaleConnection(AWSQueryConnection):
             params['MaxRecords'] = max_records
         if names:
             self.build_list_params(params, names, 'LaunchConfigurationNames')
+        next_token = kwargs.get('next_token')
+        if next_token:
+            params['NextToken'] = next_token
         return self.get_list('DescribeLaunchConfigurations', params,
                              [('member', LaunchConfiguration)])
 

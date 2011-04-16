@@ -151,6 +151,7 @@ RegionData = {
     'us-east-1' : 'monitoring.us-east-1.amazonaws.com',
     'us-west-1' : 'monitoring.us-west-1.amazonaws.com',
     'eu-west-1' : 'monitoring.eu-west-1.amazonaws.com',
+    'ap-northeast-1' : 'monitoring.ap-northeast-1.amazonaws.com',
     'ap-southeast-1' : 'monitoring.ap-southeast-1.amazonaws.com'}
 
 def regions():
@@ -413,7 +414,7 @@ class CloudWatchConnection(AWSQueryConnection):
                     'MetricName'            :       alarm.metric,
                     'Namespace'             :       alarm.namespace,
                     'Statistic'             :       alarm.statistic,
-                    'ComparisonOperator'    :       MetricAlarm._cmp_map[alarm.comparison],
+                    'ComparisonOperator'    :       alarm.comparison,
                     'Threshold'             :       alarm.threshold,
                     'EvaluationPeriods'     :       alarm.evaluation_periods,
                     'Period'                :       alarm.period,

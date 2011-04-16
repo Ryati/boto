@@ -278,6 +278,8 @@ class AWSQueryRequest(object):
                          help='Override access key value')
         group.add_option('-S', '--secret-key', action='store',
                          help='Override secret key value')
+        group.add_option('--version', action='store_true',
+                         help='Display version string')
         if self.Filters:
             self.group.add_option('--help-filters', action='store_true',
                                    help='Display list of available filters')
@@ -302,6 +304,10 @@ class AWSQueryRequest(object):
             self.args['aws_access_key_id'] = options.access_key_id
         if options.secret_key:
             self.args['aws_secret_access_key'] = options.secret_key
+        if options.version:
+            # TODO - Where should the version # come from?
+            print 'version x.xx'
+            exit(0)
 
     def build_cli_parser(self):
         self.parser = optparse.OptionParser()
@@ -381,10 +387,10 @@ class AWSQueryRequest(object):
         try:
             response = self.send()
             self.cli_formatter(response)
-        except RequiredParamError as e:
+        except RequiredParamError, e:
             print e
             sys.exit(1)
-        except self.get_connection().ResponseError as err:
+        except self.get_connection().ResponseError, err:
             print 'Error(%s): %s' % (err.error_code, err.error_message)
 
     def _generic_cli_formatter(self, fmt, data, label=''):

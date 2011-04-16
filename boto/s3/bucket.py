@@ -48,6 +48,7 @@ class S3WebsiteEndpointTranslate:
 
     trans_region['EU'] = 's3-website-eu-west-1'
     trans_region['us-west-1'] = 's3-website-us-west-1'
+    trans_region['ap-northeast-1'] = 's3-website-ap-northeast-1'
     trans_region['ap-southeast-1'] = 's3-website-ap-southeast-1'
 
     @classmethod
@@ -807,9 +808,10 @@ class Bucket(object):
                              mfa_token=None, headers=None):
         """
         Configure versioning for this bucket.
-        Note: This feature is currently in beta release and is available
-              only in the Northern California region.
-
+        
+        ..note:: This feature is currently in beta release and is available
+                 only in the Northern California region.
+                 
         :type versioning: bool
         :param versioning: A boolean indicating whether version is
                            enabled (True) or disabled (False).
@@ -921,14 +923,17 @@ class Bucket(object):
 
         :rtype: dict
         :returns: A dictionary containing a Python representation
-                  of the XML response from S3.  The overall structure is:
+                  of the XML response from S3. The overall structure is:
 
-                   * WebsiteConfiguration
-                     * IndexDocument
-                       * Suffix : suffix that is appended to request that
-                         is for a "directory" on the website endpoint
-                     * ErrorDocument
-                       * Key : name of object to serve when an error occurs
+            * WebsiteConfiguration
+    
+              * IndexDocument
+    
+                * Suffix : suffix that is appended to request that
+                is for a "directory" on the website endpoint
+                * ErrorDocument
+    
+                  * Key : name of object to serve when an error occurs
         """
         response = self.connection.make_request('GET', self.name,
                 query_args='website', headers=headers)

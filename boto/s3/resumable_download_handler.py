@@ -65,7 +65,7 @@ class ByteTranslatingCallbackHandler(object):
 
     def call(self, total_bytes_uploaded, total_size):
         self.proxied_cb(self.download_start_point + total_bytes_uploaded,
-                        self.download_start_point + total_size)
+                        total_size)
 
 
 def get_cur_file_size(fp, position_to_eof=False):
@@ -294,6 +294,13 @@ class ResumableDownloadHandler(object):
             except self.RETRYABLE_EXCEPTIONS, e:
                 if debug >= 1:
                     print('Caught exception (%s)' % e.__repr__())
+                if isinstance(e, IOError) and e.errno == errno.EPIPE:
+                    # Broken pipe error causes httplib to immediately
+                    # close the socket (http://bugs.python.org/issue5542),
+                    # so we need to close and reopen the key before resuming
+                    # the download.
+                    key.get_file(fp, headers, cb, num_cb, torrent, version_id,
+                                 override_num_retries=0)
             except ResumableDownloadException, e:
                 if (e.disposition ==
                     ResumableTransferDisposition.ABORT_CUR_PROCESS):
@@ -329,7 +336,14 @@ class ResumableDownloadHandler(object):
 
             # Close the key, in case a previous download died partway
             # through and left data in the underlying key HTTP buffer.
-            key.close()
+            # Do this within a try/except block in case the connection is
+            # closed (since key.close() attempts to do a final read, in which
+            # case this read attempt would get an IncompleteRead exception,
+            # which we can safely ignore.
+            try:
+                key.close()
+            except httplib.IncompleteRead:
+                pass
 
             sleep_time_secs = 2**progress_less_iterations
             if debug >= 1:

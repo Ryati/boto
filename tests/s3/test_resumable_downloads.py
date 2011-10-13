@@ -45,7 +45,16 @@ from boto.s3.resumable_download_handler import ResumableDownloadHandler
 from boto.exception import ResumableTransferDisposition
 from boto.exception import ResumableDownloadException
 from boto.exception import StorageResponseError
-from tests.s3.cb_test_harnass import CallbackTestHarnass
+from cb_test_harnass import CallbackTestHarnass
+
+# We don't use the OAuth2 authentication plugin directly; importing it here
+# ensures that it's loaded and available by default.
+try:
+  from oauth2_plugin import oauth2_plugin
+except ImportError:
+  # Do nothing - if user doesn't have OAuth2 configured it doesn't matter;
+  # and if they do, the tests will fail (as they should in that case).
+  pass
 
 
 class ResumableDownloadTests(unittest.TestCase):
@@ -113,9 +122,9 @@ class ResumableDownloadTests(unittest.TestCase):
 
         # Create the test bucket.
         hostname = socket.gethostname().split('.')[0]
-        uri_base_str = 'gs://res_download_test_%s_%s_%s' % (
+        uri_base_str = 'gs://res-download-test-%s-%s-%s' % (
             hostname, os.getpid(), int(time.time()))
-        cls.src_bucket_uri = storage_uri('%s_dst' % uri_base_str)
+        cls.src_bucket_uri = storage_uri('%s-dst' % uri_base_str)
         cls.src_bucket_uri.create_bucket()
 
         # Create test source objects.
@@ -227,6 +236,22 @@ class ResumableDownloadTests(unittest.TestCase):
         """
         # Test one of the RETRYABLE_EXCEPTIONS.
         exception = ResumableDownloadHandler.RETRYABLE_EXCEPTIONS[0]
+        harnass = CallbackTestHarnass(exception=exception)
+        res_download_handler = ResumableDownloadHandler(num_retries=1)
+        self.small_src_key.get_contents_to_file(
+            self.dst_fp, cb=harnass.call,
+            res_download_handler=res_download_handler)
+        # Ensure downloaded object has correct content.
+        self.assertEqual(self.small_src_key_size,
+                         get_cur_file_size(self.dst_fp))
+        self.assertEqual(self.small_src_key_as_string,
+                         self.small_src_key.get_contents_as_string())
+
+    def test_broken_pipe_recovery(self):
+        """
+        Tests handling of a Broken Pipe (which interacts with an httplib bug)
+        """
+        exception = IOError(errno.EPIPE, "Broken pipe")
         harnass = CallbackTestHarnass(exception=exception)
         res_download_handler = ResumableDownloadHandler(num_retries=1)
         self.small_src_key.get_contents_to_file(

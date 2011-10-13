@@ -3,7 +3,14 @@ import urlparse
 import boto
 import boto.connection
 import boto.jsonresponse
+import boto.exception
 import awsqueryrequest
+
+class NoCredentialsError(boto.exception.BotoClientError):
+
+    def __init__(self):
+        s = 'Unable to find credentials'
+        boto.exception.BotoClientError.__init__(self, s)
 
 class AWSQueryService(boto.connection.AWSQueryConnection):
 
@@ -23,16 +30,21 @@ class AWSQueryService(boto.connection.AWSQueryConnection):
         self.check_for_credential_file()
         self.check_for_env_url()
         if 'host' not in self.args:
-            region_name = self.args.get('region_name', self.Regions[0]['name'])
-            for region in self.Regions:
-                if region['name'] == region_name:
-                    self.args['host'] = region['endpoint']
+            if self.Regions:
+                region_name = self.args.get('region_name',
+                                            self.Regions[0]['name'])
+                for region in self.Regions:
+                    if region['name'] == region_name:
+                        self.args['host'] = region['endpoint']
         if 'path' not in self.args:
             self.args['path'] = self.Path
         if 'port' not in self.args:
             self.args['port'] = self.Port
-        boto.connection.AWSQueryConnection.__init__(self, **self.args)
-        self.aws_response = None
+        try:
+            boto.connection.AWSQueryConnection.__init__(self, **self.args)
+            self.aws_response = None
+        except boto.exception.NoAuthHandlerFound:
+            raise NoCredentialsError()
 
     def check_for_credential_file(self):
         """
@@ -76,7 +88,6 @@ class AWSQueryService(boto.connection.AWSQueryConnection):
         url = self.args.get('url', None)
         if url:
             del self.args['url']
-        # TODO: move EUARE_URL to class variable
         if not url and self.EnvURL in os.environ:
             url = os.environ[self.EnvURL]
         if url:

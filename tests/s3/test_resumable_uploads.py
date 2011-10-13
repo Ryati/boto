@@ -41,10 +41,20 @@ import unittest
 import boto
 from boto.exception import GSResponseError
 from boto.gs.resumable_upload_handler import ResumableUploadHandler
+from boto.exception import InvalidUriError
 from boto.exception import ResumableTransferDisposition
 from boto.exception import ResumableUploadException
 from boto.exception import StorageResponseError
-from tests.s3.cb_test_harnass import CallbackTestHarnass
+from cb_test_harnass import CallbackTestHarnass
+
+# We don't use the OAuth2 authentication plugin directly; importing it here
+# ensures that it's loaded and available by default.
+try:
+  from oauth2_plugin import oauth2_plugin
+except ImportError:
+  # Do nothing - if user doesn't have OAuth2 configured it doesn't matter;
+  # and if they do, the tests will fail (as they should in that case).
+  pass
 
 
 class ResumableUploadTests(unittest.TestCase):
@@ -55,31 +65,29 @@ class ResumableUploadTests(unittest.TestCase):
     def get_suite_description(self):
         return 'Resumable upload test suite'
 
-    @classmethod
-    def setUp(cls):
+    def setUp(self):
         """
         Creates dst_key needed by all tests.
 
         This method's namingCase is required by the unittest framework.
         """
-        cls.dst_key = cls.dst_key_uri.new_key(validate=False)
+        self.dst_key = self.dst_key_uri.new_key(validate=False)
 
-    @classmethod
-    def tearDown(cls):
+    def tearDown(self):
         """
         Deletes any objects or files created by last test run.
 
         This method's namingCase is required by the unittest framework.
         """
         try:
-            cls.dst_key_uri.delete_key()
+            self.dst_key_uri.delete_key()
         except GSResponseError:
             # Ignore possible not-found error.
             pass
         # Recursively delete dst dir and then re-create it, so in effect we
         # remove all dirs and files under that directory.
-        shutil.rmtree(cls.tmp_dir)
-        os.mkdir(cls.tmp_dir)
+        shutil.rmtree(self.tmp_dir)
+        os.mkdir(self.tmp_dir)
 
     @staticmethod
     def build_test_input_file(size):
@@ -93,6 +101,31 @@ class ResumableUploadTests(unittest.TestCase):
             buf.append(str(random.randint(0, 9)))
         file_as_string = ''.join(buf)
         return (file_as_string, StringIO.StringIO(file_as_string))
+
+    @classmethod
+    def get_dst_bucket_uri(cls, debug):
+        """A unique bucket to test."""
+        hostname = socket.gethostname().split('.')[0]
+        uri_base_str = 'gs://res-upload-test-%s-%s-%s' % (
+            hostname, os.getpid(), int(time.time()))
+        return boto.storage_uri('%s-dst' % uri_base_str, debug=debug)
+
+    @classmethod
+    def get_dst_key_uri(cls):
+        """A key to test."""
+        return cls.dst_bucket_uri.clone_replace_name('obj')
+
+    @classmethod
+    def get_staged_host(cls):
+        """URL of an existing bucket."""
+        return 'pub.commondatastorage.googleapis.com'
+
+    @classmethod
+    def get_invalid_upload_id(cls):
+        return (
+            'http://%s/?upload_id='
+            'AyzB2Uo74W4EYxyi5dp_-r68jz8rtbvshsv4TX7srJVkJ57CxTY5Dw2' % (
+                cls.get_staged_host()))
 
     @classmethod
     def set_up_class(cls, debug):
@@ -122,13 +155,9 @@ class ResumableUploadTests(unittest.TestCase):
         cls.tmp_dir = tempfile.mkdtemp(prefix=cls.tmpdir_prefix)
 
         # Create the test bucket.
-        hostname = socket.gethostname().split('.')[0]
-        cls.uri_base_str = 'gs://res_upload_test_%s_%s_%s' % (
-            hostname, os.getpid(), int(time.time()))
-        cls.dst_bucket_uri = boto.storage_uri('%s_dst' %
-                                              cls.uri_base_str, debug=debug)
+        cls.dst_bucket_uri = cls.get_dst_bucket_uri(debug)
         cls.dst_bucket_uri.create_bucket()
-        cls.dst_key_uri = cls.dst_bucket_uri.clone_replace_name('obj')
+        cls.dst_key_uri = cls.get_dst_key_uri()
 
         cls.tracker_file_name = '%s%suri_tracker' % (cls.tmp_dir, os.sep)
 
@@ -138,9 +167,7 @@ class ResumableUploadTests(unittest.TestCase):
         f.write('ftp://example.com')
         f.close()
 
-        cls.invalid_upload_id = (
-            'http://pub.commondatastorage.googleapis.com/?upload_id='
-            'AyzB2Uo74W4EYxyi5dp_-r68jz8rtbvshsv4TX7srJVkJ57CxTY5Dw2')
+        cls.invalid_upload_id = cls.get_invalid_upload_id()
         cls.invalid_upload_id_tracker_file_name = (
             '%s%sinvalid_upload_id_tracker' % (cls.tmp_dir, os.sep))
         f = open(cls.invalid_upload_id_tracker_file_name, 'w')
@@ -156,9 +183,6 @@ class ResumableUploadTests(unittest.TestCase):
         """
         if not hasattr(cls, 'created_test_data'):
             return
-        # Call cls.tearDown() in case the tests got interrupted, to ensure
-        # dst objects get deleted.
-        cls.tearDown()
 
         # Retry (for up to 2 minutes) the bucket gets deleted (it may not
         # the first time round, due to eventual consistency of bucket delete
@@ -225,6 +249,21 @@ class ResumableUploadTests(unittest.TestCase):
         """
         # Test one of the RETRYABLE_EXCEPTIONS.
         exception = ResumableUploadHandler.RETRYABLE_EXCEPTIONS[0]
+        harnass = CallbackTestHarnass(exception=exception)
+        res_upload_handler = ResumableUploadHandler(num_retries=1)
+        self.dst_key.set_contents_from_file(
+            self.small_src_file, cb=harnass.call,
+            res_upload_handler=res_upload_handler)
+        # Ensure uploaded object has correct content.
+        self.assertEqual(self.small_src_file_size, self.dst_key.size)
+        self.assertEqual(self.small_src_file_as_string,
+                         self.dst_key.get_contents_as_string())
+
+    def test_broken_pipe_recovery(self):
+        """
+        Tests handling of a Broken Pipe (which interacts with an httplib bug)
+        """
+        exception = IOError(errno.EPIPE, "Broken pipe")
         harnass = CallbackTestHarnass(exception=exception)
         res_upload_handler = ResumableUploadHandler(num_retries=1)
         self.dst_key.set_contents_from_file(
@@ -408,8 +447,7 @@ class ResumableUploadTests(unittest.TestCase):
             # This abort should be a hard abort (file size changing during
             # transfer).
             self.assertEqual(e.disposition, ResumableTransferDisposition.ABORT)
-            self.assertNotEqual(
-                e.message.find('attempt to upload a different size file'), -1)
+            self.assertNotEqual(e.message.find('file size changed'), -1, e.message) 
 
     def test_upload_with_file_size_change_during_upload(self):
         """
@@ -459,8 +497,11 @@ class ResumableUploadTests(unittest.TestCase):
             self.assertNotEqual(
                 e.message.find('md5 signature doesn\'t match etag'), -1)
             # Ensure the bad data wasn't left around.
-            all_keys = self.dst_key_uri.get_all_keys()
-            self.assertEqual(0, len(all_keys))
+            try:
+              self.dst_key_uri.get_key()
+              self.fail('Did not get expected InvalidUriError')
+            except InvalidUriError, e:
+              pass
 
     def test_upload_with_content_length_header_set(self):
         """

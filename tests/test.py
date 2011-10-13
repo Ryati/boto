@@ -24,6 +24,7 @@
 do the unit tests!
 """
 
+import logging
 import sys
 import unittest
 import getopt
@@ -31,64 +32,79 @@ import getopt
 from sqs.test_connection import SQSConnectionTest
 from s3.test_connection import S3ConnectionTest
 from s3.test_versioning import S3VersionTest
+from s3.test_encryption import S3EncryptionTest
 from s3.test_gsconnection import GSConnectionTest
+from s3.test_https_cert_validation import CertValidationTest
 from ec2.test_connection import EC2ConnectionTest
 from autoscale.test_connection import AutoscaleConnectionTest
 from sdb.test_connection import SDBConnectionTest
 
 def usage():
-    print 'test.py  [-t testsuite] [-v verbosity]'
-    print '    -t   run specific testsuite (s3|s3ver|s3nover|gs|sqs|ec2|sdb|all)'
-    print '    -v   verbosity (0|1|2)'
+    print "test.py  [-t testsuite] [-v verbosity]"
+    print "    -t   run specific testsuite (s3|ssl|s3ver|s3nover|gs|sqs|ec2|sdb|all)"
+    print "    -v   verbosity (0|1|2)"
 
 def main():
     try:
-        opts, args = getopt.getopt(sys.argv[1:], 'ht:v:',
-                                   ['help', 'testsuite', 'verbosity'])
+        opts, args = getopt.getopt(sys.argv[1:], "ht:v:",
+                                   ["help", "testsuite", "verbosity"])
     except:
         usage()
         sys.exit(2)
-    testsuite = 'all'
+    testsuite = "all"
     verbosity = 1
     for o, a in opts:
-        if o in ('-h', '--help'):
+        if o in ("-h", "--help"):
             usage()
             sys.exit()
-        if o in ('-t', '--testsuite'):
+        if o in ("-t", "--testsuite"):
             testsuite = a
-        if o in ('-v', '--verbosity'):
+        if o in ("-v", "--verbosity"):
             verbosity = int(a)
     if len(args) != 0:
         usage()
         sys.exit()
-    suite = unittest.TestSuite()
-    if testsuite == 'all':
-        suite.addTest(unittest.makeSuite(SQSConnectionTest))
-        suite.addTest(unittest.makeSuite(S3ConnectionTest))
-        suite.addTest(unittest.makeSuite(EC2ConnectionTest))
-        suite.addTest(unittest.makeSuite(SDBConnectionTest))
-        suite.addTest(unittest.makeSuite(AutoscaleConnectionTest))
-    elif testsuite == 's3':
-        suite.addTest(unittest.makeSuite(S3ConnectionTest))
-        suite.addTest(unittest.makeSuite(S3VersionTest))
-    elif testsuite == 's3ver':
-        suite.addTest(unittest.makeSuite(S3VersionTest))
-    elif testsuite == 's3nover':
-        suite.addTest(unittest.makeSuite(S3ConnectionTest))
-    elif testsuite == 'gs':
-        suite.addTest(unittest.makeSuite(GSConnectionTest))
-    elif testsuite == 'sqs':
-        suite.addTest(unittest.makeSuite(SQSConnectionTest))
-    elif testsuite == 'ec2':
-        suite.addTest(unittest.makeSuite(EC2ConnectionTest))
-    elif testsuite == 'autoscale':
-        suite.addTest(unittest.makeSuite(AutoscaleConnectionTest))
-    elif testsuite == 'sdb':
-        suite.addTest(unittest.makeSuite(SDBConnectionTest))
-    else:
+    try:
+        tests = suite(testsuite)
+    except ValueError:
         usage()
         sys.exit()
-    unittest.TextTestRunner(verbosity=verbosity).run(suite)
+    if verbosity > 1:
+        logging.basicConfig(level=logging.DEBUG)
+    unittest.TextTestRunner(verbosity=verbosity).run(tests)
+
+def suite(testsuite="all"):
+    tests = unittest.TestSuite()
+    if testsuite == "all":
+        tests.addTest(unittest.makeSuite(SQSConnectionTest))
+        tests.addTest(unittest.makeSuite(S3ConnectionTest))
+        tests.addTest(unittest.makeSuite(EC2ConnectionTest))
+        tests.addTest(unittest.makeSuite(SDBConnectionTest))
+        tests.addTest(unittest.makeSuite(AutoscaleConnectionTest))
+    elif testsuite == "s3":
+        tests.addTest(unittest.makeSuite(S3ConnectionTest))
+        tests.addTest(unittest.makeSuite(S3VersionTest))
+        tests.addTest(unittest.makeSuite(S3EncryptionTest))
+    elif testsuite == "ssl":
+        tests.addTest(unittest.makeSuite(CertValidationTest))
+    elif testsuite == "s3ver":
+        tests.addTest(unittest.makeSuite(S3VersionTest))
+    elif testsuite == "s3nover":
+        tests.addTest(unittest.makeSuite(S3ConnectionTest))
+        tests.addTest(unittest.makeSuite(S3EncryptionTest))
+    elif testsuite == "gs":
+        tests.addTest(unittest.makeSuite(GSConnectionTest))
+    elif testsuite == "sqs":
+        tests.addTest(unittest.makeSuite(SQSConnectionTest))
+    elif testsuite == "ec2":
+        tests.addTest(unittest.makeSuite(EC2ConnectionTest))
+    elif testsuite == "autoscale":
+        tests.addTest(unittest.makeSuite(AutoscaleConnectionTest))
+    elif testsuite == "sdb":
+        tests.addTest(unittest.makeSuite(SDBConnectionTest))
+    else:
+        raise ValueError("Invalid choice.")
+    return tests
 
 if __name__ == "__main__":
     main()

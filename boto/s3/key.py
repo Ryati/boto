@@ -425,12 +425,8 @@ class Key(object):
         return self.bucket.set_canned_acl('public-read', self.name, headers)
 
     def generate_url(self, expires_in, method='GET', headers=None,
-<<<<<<< HEAD
-                     query_auth=True, force_http=False, response_headers=None, parameters=None):
-=======
-                     query_auth=True, force_http=False, response_headers=None,
-                     expires_in_absolute=False):
->>>>>>> 0b266d419189fd8fdaef7abd17aac8683a789d5e
+                     query_auth=True, force_http=False, response_headers=None, 
+                     expires_in_absolute=False, parameters=None):
         """
         Generate a URL to access this key.
 
@@ -455,12 +451,9 @@ class Key(object):
                                                    headers, query_auth,
                                                    force_http,
                                                    response_headers,
-<<<<<<< HEAD
+                                                   expires_in_absolute,
                                                    parameters
                                                   )
-=======
-                                                   expires_in_absolute)
->>>>>>> 0b266d419189fd8fdaef7abd17aac8683a789d5e
 
     def send_file(self, fp, headers=None, cb=None, num_cb=10,
                   query_args=None, chunked_transfer=False):

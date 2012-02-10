@@ -129,9 +129,8 @@ def canonical_string(method, path, headers, expires=None,
     
     if len(t) > 1:
         qsa = t[1].split('&')
-<<<<<<< HEAD
-        qsa = [ a.split('=') for a in qsa]
-        qsa = [ a for a in qsa if a[0] in qsa_of_interest ]
+        qsa = [ a.split('=', 1) for a in qsa]
+        qsa = [ unquote_v(a) for a in qsa if a[0] in qsa_of_interest ]
     else:
         qsa = []
 
@@ -143,16 +142,9 @@ def canonical_string(method, path, headers, expires=None,
         qsa = [ '='.join(a) for a in qsa ]
         buf += '?'
         buf += '&'.join(qsa)
-=======
-        qsa = [ a.split('=', 1) for a in qsa]
-        qsa = [ unquote_v(a) for a in qsa if a[0] in qsa_of_interest ]
-        if len(qsa) > 0:
-            qsa.sort(cmp=lambda x,y:cmp(x[0], y[0]))
-            qsa = [ '='.join(a) for a in qsa ]
-            buf += '?'
-            buf += '&'.join(qsa)
->>>>>>> 0b266d419189fd8fdaef7abd17aac8683a789d5e
 
+
+   
     return buf
 
 def merge_meta(headers, metadata, provider=None):

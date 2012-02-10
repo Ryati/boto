@@ -24,28 +24,37 @@
 import boto
 from boto import handler
 from boto.resultset import ResultSet
+from boto.exception import BotoClientError
 from boto.s3.acl import Policy, CannedACLStrings, Grant
 from boto.s3.key import Key
 from boto.s3.prefix import Prefix
 from boto.s3.deletemarker import DeleteMarker
 from boto.s3.multipart import MultiPartUpload
 from boto.s3.multipart import CompleteMultiPartUpload
+from boto.s3.multidelete import MultiDeleteResult
+from boto.s3.multidelete import Error
 from boto.s3.bucketlistresultset import BucketListResultSet
 from boto.s3.bucketlistresultset import VersionedBucketListResultSet
 from boto.s3.bucketlistresultset import MultiPartUploadListResultSet
+from boto.s3.lifecycle import Lifecycle
 import boto.jsonresponse
 import boto.utils
 import xml.sax
+import xml.sax.saxutils
+import StringIO
 import urllib
 import re
+import base64
 from collections import defaultdict
 
 # as per http://goo.gl/BDuud (02/19/2011)
 class S3WebsiteEndpointTranslate:
     trans_region = defaultdict(lambda :'s3-website-us-east-1')
 
-    trans_region['EU'] = 's3-website-eu-west-1'
+    trans_region['eu-west-1'] = 's3-website-eu-west-1'
     trans_region['us-west-1'] = 's3-website-us-west-1'
+    trans_region['us-west-2'] = 's3-website-us-west-2'
+    trans_region['sa-east-1'] = 's3-website-sa-east-1'
     trans_region['ap-northeast-1'] = 's3-website-ap-northeast-1'
     trans_region['ap-southeast-1'] = 's3-website-ap-southeast-1'
 
@@ -444,11 +453,108 @@ class Bucket(object):
         return self.key_class(self, key_name)
 
     def generate_url(self, expires_in, method='GET', headers=None,
-                     force_http=False, response_headers=None):
+                     force_http=False, response_headers=None,
+                     expires_in_absolute=False):
         return self.connection.generate_url(expires_in, method, self.name,
                                             headers=headers,
                                             force_http=force_http,
-                                            response_headers=response_headers)
+                                            response_headers=response_headers,
+                                            expires_in_absolute=expires_in_absolute)
+
+    def delete_keys(self, keys, quiet=False, mfa_token=None, headers=None):
+        """
+        Deletes a set of keys using S3's Multi-object delete API. If a
+        VersionID is specified for that key then that version is removed.
+        Returns a MultiDeleteResult Object, which contains Deleted
+        and Error elements for each key you ask to delete.
+        
+        :type keys: list
+        :param keys: A list of either key_names or (key_name, versionid) pairs
+                     or a list of Key instances.
+
+        :type quiet: boolean
+        :param quiet: In quiet mode the response includes only keys where
+                      the delete operation encountered an error. For a
+                      successful deletion, the operation does not return
+                      any information about the delete in the response body.
+
+        :type mfa_token: tuple or list of strings
+        :param mfa_token: A tuple or list consisting of the serial number
+                          from the MFA device and the current value of
+                          the six-digit token associated with the device.
+                          This value is required anytime you are
+                          deleting versioned objects from a bucket
+                          that has the MFADelete option on the bucket.
+
+        :returns: An instance of MultiDeleteResult
+        """
+        ikeys = iter(keys)
+        result = MultiDeleteResult(self)
+        provider = self.connection.provider
+        query_args = 'delete'
+        def delete_keys2(hdrs):
+            hdrs = hdrs or {}
+            data = u"""<?xml version="1.0" encoding="UTF-8"?>"""
+            data += u"<Delete>"
+            if quiet:
+                data += u"<Quiet>true</Quiet>"
+            count = 0
+            while count < 1000:
+                try:
+                    key = ikeys.next()
+                except StopIteration:
+                    break
+                if isinstance(key, basestring):
+                    key_name = key
+                    version_id = None
+                elif isinstance(key, tuple) and len(key) == 2:
+                    key_name, version_id = key
+                elif (isinstance(key, Key) or isinstance(key, DeleteMarker)) and key.name:
+                    key_name = key.name
+                    version_id = key.version_id
+                else:
+                    if isinstance(key, Prefix):
+                        key_name = key.name
+                        code = 'PrefixSkipped'   # Don't delete Prefix
+                    else:
+                        key_name = repr(key)     # try get a string
+                        code = 'InvalidArgument' # other unknown type
+                    message = 'Invalid. No delete action taken for this object.'
+                    error = Error(key_name, code=code, message=message)
+                    result.errors.append(error)
+                    continue
+                count += 1
+                #key_name = key_name.decode('utf-8')
+                data += u"<Object><Key>%s</Key>" % xml.sax.saxutils.escape(key_name)
+                if version_id:
+                    data += u"<VersionId>%s</VersionId>" % version_id
+                data += u"</Object>"
+            data += u"</Delete>"
+            if count <= 0:
+                return False # no more
+            data = data.encode('utf-8')
+            fp = StringIO.StringIO(data)
+            md5 = boto.utils.compute_md5(fp)
+            hdrs['Content-MD5'] = md5[1]
+            hdrs['Content-Type'] = 'text/xml'
+            if mfa_token:
+                hdrs[provider.mfa_header] = ' '.join(mfa_token)
+            response = self.connection.make_request('POST', self.name,
+                                                    headers=hdrs,
+                                                    query_args=query_args,
+                                                    data=data)
+            body = response.read()
+            if response.status == 200:
+                h = handler.XmlHandler(result, self)
+                xml.sax.parseString(body, h)
+                return count >= 1000 # more?
+            else:
+                raise provider.storage_response_error(response.status,
+                                                      response.reason,
+                                                      body)
+        while delete_keys2(headers):
+            pass
+        return result
 
     def delete_key(self, key_name, headers=None,
                    version_id=None, mfa_token=None):
@@ -490,7 +596,7 @@ class Bucket(object):
     def copy_key(self, new_key_name, src_bucket_name,
                  src_key_name, metadata=None, src_version_id=None,
                  storage_class='STANDARD', preserve_acl=False,
-                 encrypt_key=False):
+                 encrypt_key=False, headers=None, query_args=None):
         """
         Create a new key in the bucket by copying another existing key.
 
@@ -541,10 +647,17 @@ class Bucket(object):
                             will be stored in an encrypted form while
                             at rest in S3.
 
+        :type headers: dict
+        :param headers: A dictionary of header name/value pairs.
+
+        :type query_args: string
+        :param query_args: A string of additional querystring arguments
+                           to append to the request
+
         :rtype: :class:`boto.s3.key.Key` or subclass
         :returns: An instance of the newly created key object
         """
-        headers = {}
+        headers = headers or {}
         provider = self.connection.provider
         src_key_name = boto.utils.get_utf8_value(src_key_name)
         if preserve_acl:
@@ -557,17 +670,19 @@ class Bucket(object):
             headers[provider.server_side_encryption_header] = 'AES256'
         src = '%s/%s' % (src_bucket_name, urllib.quote(src_key_name))
         if src_version_id:
-            src += '?version_id=%s' % src_version_id
-        headers = {provider.copy_source_header : str(src)}
-        if storage_class != 'STANDARD':
+            src += '?versionId=%s' % src_version_id
+        headers[provider.copy_source_header] = str(src)
+        # make sure storage_class_header key exists before accessing it
+        if provider.storage_class_header and storage_class:
             headers[provider.storage_class_header] = storage_class
         if metadata:
             headers[provider.metadata_directive_header] = 'REPLACE'
             headers = boto.utils.merge_meta(headers, metadata, provider)
-        else:
+        elif not query_args: # Can't use this header with multi-part copy.
             headers[provider.metadata_directive_header] = 'COPY'
         response = self.connection.make_request('PUT', self.name, new_key_name,
-                                                headers=headers)
+                                                headers=headers,
+                                                query_args=query_args)
         body = response.read()
         if response.status == 200:
             key = self.new_key(new_key_name)
@@ -615,8 +730,8 @@ class Bucket(object):
                 response.status, response.reason, body)
         return body
 
-    def set_xml_acl(self, acl_str, key_name='', headers=None, version_id=None):
-        query_args = 'acl'
+    def set_xml_acl(self, acl_str, key_name='', headers=None, version_id=None,
+                    query_args='acl'):
         if version_id:
             query_args += '&versionId=%s' % version_id
         response = self.connection.make_request('PUT', self.name, key_name,
@@ -652,6 +767,80 @@ class Bucket(object):
         else:
             raise self.connection.provider.storage_response_error(
                 response.status, response.reason, body)
+
+    def set_subresource(self, subresource, value, key_name = '', headers=None,
+                        version_id=None):
+        """
+        Set a subresource for a bucket or key.
+
+        :type subresource: string
+        :param subresource: The subresource to set.
+
+        :type value: string
+        :param value: The value of the subresource.
+
+        :type key_name: string
+        :param key_name: The key to operate on, or None to operate on the
+                         bucket.
+
+        :type headers: dict
+        :param headers: Additional HTTP headers to include in the request.
+
+        :type src_version_id: string
+        :param src_version_id: Optional. The version id of the key to operate
+                               on. If not specified, operate on the newest
+                               version.
+        """
+        if not subresource:
+            raise TypeError('set_subresource called with subresource=None')
+        query_args = subresource
+        if version_id:
+            query_args += '&versionId=%s' % version_id
+        response = self.connection.make_request('PUT', self.name, key_name,
+                                                data=value.encode('UTF-8'),
+                                                query_args=query_args,
+                                                headers=headers)
+        body = response.read()
+        if response.status != 200:
+            raise self.connection.provider.storage_response_error(
+                response.status, response.reason, body)
+
+    def get_subresource(self, subresource, key_name='', headers=None,
+                        version_id=None):
+        """
+        Get a subresource for a bucket or key.
+
+        :type subresource: string
+        :param subresource: The subresource to get.
+
+        :type key_name: string
+        :param key_name: The key to operate on, or None to operate on the
+                         bucket.
+
+        :type headers: dict
+        :param headers: Additional HTTP headers to include in the request.
+
+        :type src_version_id: string
+        :param src_version_id: Optional. The version id of the key to operate
+                               on. If not specified, operate on the newest
+                               version.
+
+        :rtype: string
+        :returns: The value of the subresource.
+        """
+        if not subresource:
+            raise TypeError('get_subresource called with subresource=None')
+        query_args = subresource
+        if version_id:
+            query_args += '&versionId=%s' % version_id
+        response = self.connection.make_request('GET', self.name, key_name,
+                                                query_args=query_args,
+                                                headers=headers)
+        body = response.read()
+        if response.status != 200:
+            raise self.connection.provider.storage_response_error(
+                response.status, response.reason, body)
+        return body
 
     def make_public(self, recursive=False, headers=None):
         self.set_canned_acl('public-read', headers=headers)
@@ -902,6 +1091,67 @@ class Bucket(object):
             raise self.connection.provider.storage_response_error(
                 response.status, response.reason, body)
 
+    def configure_lifecycle(self, lifecycle_config, headers=None):
+        """
+        Configure lifecycle for this bucket.
+        
+        :type lifecycle_config: :class:`boto.s3.lifecycle.Lifecycle`
+        :param lifecycle_config: The lifecycle configuration you want
+            to configure for this bucket.
+        """
+        fp = StringIO.StringIO(lifecycle_config.to_xml())
+        md5 = boto.utils.compute_md5(fp)
+        if headers is None:
+            headers = {}
+        headers['Content-MD5'] = md5[1]
+        headers['Content-Type'] = 'text/xml'
+        response = self.connection.make_request('PUT', self.name,
+                                                data=fp.getvalue(),
+                                                query_args='lifecycle',
+                                                headers=headers)
+        body = response.read()
+        if response.status == 200:
+            return True
+        else:
+            raise self.connection.provider.storage_response_error(
+                response.status, response.reason, body)
+        
+    def get_lifecycle_config(self, headers=None):
+        """
+        Returns the current lifecycle configuration on the bucket.
+
+        :rtype: :class:`boto.s3.lifecycle.Lifecycle`
+        :returns: A LifecycleConfig object that describes all current
+            lifecycle rules in effect for the bucket.
+        """
+        response = self.connection.make_request('GET', self.name,
+                query_args='lifecycle', headers=headers)
+        body = response.read()
+        boto.log.debug(body)
+        if response.status == 200:
+            lifecycle = Lifecycle(self)
+            h = handler.XmlHandler(lifecycle, self)
+            xml.sax.parseString(body, h)
+            return lifecycle
+        else:
+            raise self.connection.provider.storage_response_error(
+                response.status, response.reason, body)
+
+    def delete_lifecycle_configuration(self, headers=None):
+        """
+        Removes all lifecycle configuration from the bucket.
+        """
+        response = self.connection.make_request('DELETE', self.name,
+                                                query_args='lifecycle',
+                                                headers=headers)
+        body = response.read()
+        boto.log.debug(body)
+        if response.status == 204:
+            return True
+        else:
+            raise self.connection.provider.storage_response_error(
+                response.status, response.reason, body)
+
     def configure_website(self, suffix, error_key='', headers=None):
         """
         Configure this bucket to act as a website
@@ -941,17 +1191,17 @@ class Bucket(object):
 
         :rtype: dict
         :returns: A dictionary containing a Python representation
-            of the XML response from S3. The overall structure is:
+                  of the XML response from S3. The overall structure is:
 
-            * WebsiteConfiguration
-    
-              * IndexDocument
-    
-                * Suffix : suffix that is appended to request that
-                  is for a "directory" on the website endpoint
-                * ErrorDocument
-    
-                  * Key : name of object to serve when an error occurs
+        * WebsiteConfiguration
+
+          * IndexDocument
+
+            * Suffix : suffix that is appended to request that
+              is for a "directory" on the website endpoint
+            * ErrorDocument
+
+              * Key : name of object to serve when an error occurs
         """
         response = self.connection.make_request('GET', self.name,
                 query_args='website', headers=headers)
@@ -992,6 +1242,10 @@ class Bucket(object):
         return '.'.join(l)
 
     def get_policy(self, headers=None):
+        """
+        Returns the JSON policy associated with the bucket.  The policy
+        is returned as an uninterpreted JSON string.
+        """
         response = self.connection.make_request('GET', self.name,
                 query_args='policy', headers=headers)
         body = response.read()
@@ -1002,6 +1256,12 @@ class Bucket(object):
                 response.status, response.reason, body)
 
     def set_policy(self, policy, headers=None):
+        """
+        Add or replace the JSON policy associated with the bucket.
+
+        :type policy: str
+        :param policy: The JSON policy as a string.
+        """
         response = self.connection.make_request('PUT', self.name,
                                                 data=policy,
                                                 query_args='policy',
@@ -1133,4 +1393,3 @@ class Bucket(object):
         
     def delete(self, headers=None):
         return self.connection.delete_bucket(self.name, headers=headers)
-

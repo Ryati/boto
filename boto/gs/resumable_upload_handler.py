@@ -23,6 +23,7 @@ import cgi
 import errno
 import httplib
 import os
+import random
 import re
 import socket
 import time
@@ -35,7 +36,7 @@ from boto.exception import ResumableTransferDisposition
 from boto.exception import ResumableUploadException
 
 """
-Handler for Google Storage resumable uploads. See
+Handler for Google Cloud Storage resumable uploads. See
 http://code.google.com/apis/storage/docs/developer-guide.html#resumable
 for details.
 
@@ -442,8 +443,10 @@ class ResumableUploadHandler(object):
             if resp.status == 400:
                 raise ResumableUploadException('Got 400 response from server '
                     'state query after failed resumable upload attempt. This '
-                    'can happen if the file size changed between upload '
-                    'attempts', ResumableTransferDisposition.ABORT)
+                    'can happen for various reasons, including specifying an '
+                    'invalid request (e.g., an invalid canned ACL) or if the '
+                    'file size changed between upload attempts',
+                    ResumableTransferDisposition.ABORT)
             else:
                 raise
         finally:
@@ -572,9 +575,10 @@ class ResumableUploadHandler(object):
                     'progress. You might try this upload again later',
                     ResumableTransferDisposition.ABORT_CUR_PROCESS)
 
-            sleep_time_secs = 2**progress_less_iterations
+            # Use binary exponential backoff to desynchronize client requests
+            sleep_time_secs = random.random() * (2**progress_less_iterations)
             if debug >= 1:
                 print ('Got retryable failure (%d progress-less in a row).\n'
-                       'Sleeping %d seconds before re-trying' %
+                       'Sleeping %3.1f seconds before re-trying' %
                        (progress_less_iterations, sleep_time_secs))
             time.sleep(sleep_time_secs)

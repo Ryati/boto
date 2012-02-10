@@ -43,6 +43,10 @@ def regions():
                           endpoint='rds.eu-west-1.amazonaws.com'),
             RDSRegionInfo(name='us-west-1',
                           endpoint='rds.us-west-1.amazonaws.com'),
+            RDSRegionInfo(name='us-west-2',
+                          endpoint='rds.us-west-2.amazonaws.com'),
+            RDSRegionInfo(name='sa-east-1',
+                          endpoint='rds.sa-east-1.amazonaws.com'),
             RDSRegionInfo(name='ap-northeast-1',
                           endpoint='rds.ap-northeast-1.amazonaws.com'),
             RDSRegionInfo(name='ap-southeast-1',
@@ -73,8 +77,8 @@ def connect_to_region(region_name, **kw_params):
 class RDSConnection(AWSQueryConnection):
 
     DefaultRegionName = 'us-east-1'
-    DefaultRegionEndpoint = 'rds.amazonaws.com'
-    APIVersion = '2009-10-16'
+    DefaultRegionEndpoint = 'rds.us-east-1.amazonaws.com'
+    APIVersion = '2011-04-01'
 
     def __init__(self, aws_access_key_id=None, aws_secret_access_key=None,
                  is_secure=True, port=None, proxy=None, proxy_port=None,
@@ -229,14 +233,16 @@ class RDSConnection(AWSQueryConnection):
         :rtype: :class:`boto.rds.dbinstance.DBInstance`
         :return: The new db instance.
         """
-        params = {'DBInstanceIdentifier' : id,
-                  'AllocatedStorage' : allocated_storage,
-                  'DBInstanceClass' : instance_class,
-                  'Engine' : engine,
-                  'MasterUsername' : master_username,
-                  'MasterUserPassword' : master_password}
-        if port:
-            params['Port'] = port
+        params = {'DBInstanceIdentifier': id,
+                  'AllocatedStorage': allocated_storage,
+                  'DBInstanceClass': instance_class,
+                  'Engine': engine,
+                  'MasterUsername': master_username,
+                  'MasterUserPassword': master_password,
+                  'Port': port,
+                  'MultiAZ': str(multi_az).lower(),
+                  'AutoMinorVersionUpgrade':
+                      str(auto_minor_version_upgrade).lower()}
         if db_name:
             params['DBName'] = db_name
         if param_group:
@@ -257,12 +263,8 @@ class RDSConnection(AWSQueryConnection):
             params['BackupRetentionPeriod'] = backup_retention_period
         if preferred_backup_window:
             params['PreferredBackupWindow'] = preferred_backup_window
-        if multi_az:
-            params['MultiAZ'] = 'true'
         if engine_version:
             params['EngineVersion'] = engine_version
-        if auto_minor_version_upgrade is False:
-            params['AutoMinorVersionUpgrade'] = 'false'
 
         return self.get_object('CreateDBInstance', params, DBInstance)
 
@@ -556,7 +558,7 @@ class RDSConnection(AWSQueryConnection):
         :param name: The name of the new dbparameter group
 
         :type engine: str
-        :param engine: Name of database engine.  Must be MySQL5.1 for now.
+        :param engine: Name of database engine.
 
         :type description: string
         :param description: The description of the new security group
@@ -565,7 +567,7 @@ class RDSConnection(AWSQueryConnection):
         :return: The newly created DBSecurityGroup
         """
         params = {'DBParameterGroupName': name,
-                  'Engine': engine,
+                  'DBParameterGroupFamily': engine,
                   'Description' : description}
         return self.get_object('CreateDBParameterGroup', params, ParameterGroup)
 

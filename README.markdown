@@ -1,6 +1,6 @@
 # boto
-boto 2.0
-13-Jul-2011
+boto 2.2.1
+01-Feb-2012
 
 ## Introduction
 
@@ -25,6 +25,8 @@ At the moment, boto supports:
  * Route53 DNS Service (route53)
  * Simple Email Service (SES)
  * Flexible Payment Service (FPS)
+ * CloudFormation
+ * Amazon DynamoDB
 
 The goal of boto is to support the full breadth and depth of Amazon
 Web Services.  In addition, boto provides support for other public

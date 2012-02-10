@@ -51,16 +51,18 @@ from boto.ec2.spotdatafeedsubscription import SpotDatafeedSubscription
 from boto.ec2.bundleinstance import BundleInstanceTask
 from boto.ec2.placementgroup import PlacementGroup
 from boto.ec2.tag import Tag
+from boto.ec2.instancestatus import InstanceStatusSet
+from boto.ec2.networkinterface import NetworkInterface
 from boto.exception import EC2ResponseError
 
 #boto.set_stream_logger('ec2')
 
 class EC2Connection(AWSQueryConnection):
 
-    APIVersion = boto.config.get('Boto', 'ec2_version', '2011-01-01')
+    APIVersion = boto.config.get('Boto', 'ec2_version', '2011-12-15')
     DefaultRegionName = boto.config.get('Boto', 'ec2_region_name', 'us-east-1')
     DefaultRegionEndpoint = boto.config.get('Boto', 'ec2_region_endpoint',
-                                            'ec2.amazonaws.com')
+                                            'ec2.us-east-1.amazonaws.com')
     ResponseError = EC2ResponseError
 
     def __init__(self, aws_access_key_id=None, aws_secret_access_key=None,
@@ -71,9 +73,6 @@ class EC2Connection(AWSQueryConnection):
                  api_version=None, security_token=None):
         """
         Init method to create a new connection to EC2.
-
-        B{Note:} The host argument is overridden by the host specified in the
-                 boto configuration file.
         """
         if not region:
             region = RegionInfo(self, self.DefaultRegionName,
@@ -455,13 +454,58 @@ class EC2Connection(AWSQueryConnection):
             self.build_list_params(params, instance_ids, 'InstanceId')
         if filters:
             if 'group-id' in filters:
-                warnings.warn("The group-id filter now requires a security "
-                              "group identifier (sg-*) instead of a group "
-                              "name. To filter by group name use the "
-                              "'group-name' filter instead.", UserWarning)
+                gid = filters.get('group-id')
+                if not gid.startswith('sg-') or len(gid) != 11:
+                    warnings.warn(
+                        "The group-id filter now requires a security group "
+                        "identifier (sg-*) instead of a group name. To filter "
+                        "by group name use the 'group-name' filter instead.",
+                        UserWarning)
             self.build_filter_params(params, filters)
         return self.get_list('DescribeInstances', params,
                              [('item', Reservation)], verb='POST')
+    
+    def get_all_instance_status(self, instance_ids=None,
+                                max_results=None, next_token=None,
+                                filters=None):
+        """
+        Retrieve all the instances in your account scheduled for maintenance.
+
+        :type instance_ids: list
+        :param instance_ids: A list of strings of instance IDs
+
+        :type max_results: int
+        :param max_results: The maximum number of paginated instance
+            items per response.
+
+        :type next_token: str
+        :param next_token: A string specifying the next paginated set
+            of results to return.
+
+        :type filters: dict
+        :param filters: Optional filters that can be used to limit
+            the results returned.  Filters are provided
+            in the form of a dictionary consisting of
+            filter names as the key and filter values
+            as the value.  The set of allowable filter
+            names/values is dependent on the request
+            being performed.  Check the EC2 API guide
+            for details.
+
+        :rtype: list
+        :return: A list of instances that have maintenance scheduled.
+        """
+        params = {}
+        if instance_ids:
+            self.build_list_params(params, instance_ids, 'InstanceId')
+        if max_results:
+            params['MaxResults'] = max_results
+        if next_token:
+            params['NextToken'] = next_token
+        if filters:
+            self.build_filter_params(params, filters)
+        return self.get_object('DescribeInstanceStatus', params,
+                               InstanceStatusSet, verb='POST')
 
     def run_instances(self, image_id, min_count=1, max_count=1,
                       key_name=None, security_groups=None,
@@ -582,7 +626,7 @@ class EC2Connection(AWSQueryConnection):
             l = []
             for group in security_group_ids:
                 if isinstance(group, SecurityGroup):
-                    l.append(group.name)
+                    l.append(group.id)
                 else:
                     l.append(group)
             self.build_list_params(params, l, 'SecurityGroupId')
@@ -824,10 +868,13 @@ class EC2Connection(AWSQueryConnection):
             self.build_list_params(params, request_ids, 'SpotInstanceRequestId')
         if filters:
             if 'launch.group-id' in filters:
-                warnings.warn("The 'launch.group-id' filter now requires a "
-                              "security group id (sg-*) and no longer supports "
-                              "filtering by group name. Please update your "
-                              "filters accordingly.", UserWarning)
+                lgid = filters.get('launch.group-id')
+                if not lgid.startswith('sg-') or len(lgid) != 11:
+                    warnings.warn(
+                        "The 'launch.group-id' filter now requires a security "
+                        "group id (sg-*) and no longer supports filtering by "
+                        "group name. Please update your filters accordingly.",
+                        UserWarning)
             self.build_filter_params(params, filters)
         return self.get_list('DescribeSpotInstanceRequests', params,
                              [('item', SpotInstanceRequest)], verb='POST')
@@ -1703,8 +1750,11 @@ class EC2Connection(AWSQueryConnection):
         """
         try:
             return self.get_all_key_pairs(keynames=[keyname])[0]
-        except IndexError: # None of those key pairs available
-            return None
+        except self.ResponseError, e:
+            if e.code == 'InvalidKeyPair.NotFound':
+                return None
+            else:
+                raise
 
     def create_key_pair(self, key_name):
         """
@@ -1772,7 +1822,8 @@ class EC2Connection(AWSQueryConnection):
 
     # SecurityGroup methods
 
-    def get_all_security_groups(self, groupnames=None, group_ids=None, filters=None):
+    def get_all_security_groups(self, groupnames=None, group_ids=None,
+                                filters=None):
         """
         Get all security groups associated with your account in a region.
 
@@ -2005,7 +2056,8 @@ class EC2Connection(AWSQueryConnection):
         return self.get_status('AuthorizeSecurityGroupIngress',
                                params, verb='POST')
 
-    def authorize_security_group_egress(group_id,
+    def authorize_security_group_egress(self,
+                                        group_id,
                                         ip_protocol,
                                         from_port=None,
                                         to_port=None,
@@ -2030,7 +2082,7 @@ class EC2Connection(AWSQueryConnection):
         if src_group_id is not None:
             params['IpPermissions.1.Groups.1.GroupId'] = src_group_id
         if cidr_ip is not None:
-            params['IpPermissions.1.Groups.1.CidrIp'] = cidr_ip
+            params['IpPermissions.1.IpRanges.1.CidrIp'] = cidr_ip
 
         return self.get_status('AuthorizeSecurityGroupEgress',
                                params, verb='POST')
@@ -2107,7 +2159,7 @@ class EC2Connection(AWSQueryConnection):
             params['CidrIp'] = cidr_ip
         return self.get_status('RevokeSecurityGroupIngress', params)
 
-    def revoke_security_group(self, group_name, src_security_group_name=None,
+    def revoke_security_group(self, group_name=None, src_security_group_name=None,
                               src_security_group_owner_id=None,
                               ip_protocol=None, from_port=None, to_port=None,
                               cidr_ip=None, group_id=None,
@@ -2153,11 +2205,16 @@ class EC2Connection(AWSQueryConnection):
                     group_name, src_security_group_name,
                     src_security_group_owner_id)
         params = {}
-        if group_name:
+        if group_name is not None:
             params['GroupName'] = group_name
+        if group_id is not None:
+            params['GroupId'] = group_id
         if src_security_group_name:
             param_name = 'IpPermissions.1.Groups.1.GroupName'
             params[param_name] = src_security_group_name
+        if src_security_group_group_id:
+            param_name = 'IpPermissions.1.Groups.1.GroupId'
+            params[param_name] = src_security_group_group_id
         if src_security_group_owner_id:
             param_name = 'IpPermissions.1.Groups.1.UserId'
             params[param_name] = src_security_group_owner_id
@@ -2170,6 +2227,59 @@ class EC2Connection(AWSQueryConnection):
         if cidr_ip:
             params['IpPermissions.1.IpRanges.1.CidrIp'] = cidr_ip
         return self.get_status('RevokeSecurityGroupIngress',
+                               params, verb='POST')
+
+    def revoke_security_group_egress(self,
+                                     group_id,
+                                     ip_protocol,
+                                     from_port=None,
+                                     to_port=None,
+                                     src_group_id=None,
+                                     cidr_ip=None):
+        """
+        Remove an existing egress rule from an existing VPC security group.
+        You need to pass in an ip_protocol, from_port and to_port range only
+        if the protocol you are using is port-based. You also need to pass in either
+        a src_group_id or cidr_ip. 
+
+        :type group_name: string
+        :param group_id:  The name of the security group you are removing
+                           the rule from.
+
+        :type ip_protocol: string
+        :param ip_protocol: Either tcp | udp | icmp | -1
+
+        :type from_port: int
+        :param from_port: The beginning port number you are disabling
+
+        :type to_port: int
+        :param to_port: The ending port number you are disabling
+
+        :type src_group_id: src_group_id
+        :param src_group_id: The source security group you are revoking access to.
+
+        :type cidr_ip: string
+        :param cidr_ip: The CIDR block you are revoking access to.
+                        See http://goo.gl/Yj5QC
+
+        :rtype: bool
+        :return: True if successful.
+        """
+       
+        params = {}
+        if group_id:
+            params['GroupId'] = group_id
+        if ip_protocol:
+            params['IpPermissions.1.IpProtocol'] = ip_protocol
+        if from_port is not None:
+            params['IpPermissions.1.FromPort'] = from_port
+        if to_port is not None:
+            params['IpPermissions.1.ToPort'] = to_port
+        if src_group_id is not None:
+            params['IpPermissions.1.Groups.1.GroupId'] = src_group_id
+        if cidr_ip:
+            params['IpPermissions.1.IpRanges.1.CidrIp'] = cidr_ip
+        return self.get_status('RevokeSecurityGroupEgress',
                                params, verb='POST')
 
     #
@@ -2616,4 +2726,119 @@ class EC2Connection(AWSQueryConnection):
         self.build_list_params(params, resource_ids, 'ResourceId')
         self.build_tag_param_list(params, tags)
         return self.get_status('DeleteTags', params, verb='POST')
+
+    # Network Interface methods
+
+    def get_all_network_interfaces(self, filters=None):
+        """
+        Retrieve all of the Elastic Network Interfaces (ENI's)
+        associated with your account.
+
+        :type filters: dict
+        :param filters: Optional filters that can be used to limit
+                        the results returned.  Filters are provided
+                        in the form of a dictionary consisting of
+                        filter names as the key and filter values
+                        as the value.  The set of allowable filter
+                        names/values is dependent on the request
+                        being performed.  Check the EC2 API guide
+                        for details.
+
+        :rtype: list
+        :return: A list of :class:`boto.ec2.networkinterface.NetworkInterface`
+        """
+        params = {}
+        if filters:
+            self.build_filter_params(params, filters)
+        return self.get_list('DescribeNetworkInterfaces', params,
+                             [('item', NetworkInterface)], verb='POST')
+
+    def create_network_interface(self, subnet_id, private_ip_address=None,
+                                 description=None, groups=None):
+        """
+        Creates a network interface in the specified subnet.
+
+        :type subnet_id: str
+        :param subnet_id: The ID of the subnet to associate with the
+            network interface.
+
+        :type private_ip_address: str
+        :param private_ip_address: The private IP address of the
+            network interface.  If not supplied, one will be chosen
+            for you.
+
+        :type description: str
+        :param description: The description of the network interface.
+
+        :type groups: list
+        :param groups: Lists the groups for use by the network interface.
+            This can be either a list of group ID's or a list of
+            :class:`boto.ec2.securitygroup.SecurityGroup` objects.
+
+        :rtype: :class:`boto.ec2.networkinterface.NetworkInterface`
+        :return: The newly created network interface.
+        """
+        params = {'SubnetId' : subnet_id}
+        if private_ip_address:
+            params['PrivateIpAddress'] = private_ip_address
+        if description:
+            params['Description'] = description
+        if groups:
+            ids = []
+            for group in groups:
+                if isinstance(group, SecurityGroup):
+                    ids.append(group.id)
+                else:
+                    ids.append(group)
+            self.build_list_params(params, ids, 'SecurityGroupId')
+        return self.get_object('CreateNetworkInterface', params,
+                               NetworkInterface, verb='POST')
+
+    def attach_network_interface(self, network_interface_id,
+                                 instance_id, device_index):
+        """
+        Attaches a network interface to an instance.
+
+        :type network_interface_id: str
+        :param network_interface_id: The ID of the network interface to attach.
+
+        :type instance_id: str
+        :param instance_id: The ID of the instance that will be attached
+            to the network interface.
+
+        :type device_index: int
+        :param device_index: The index of the device for the network
+            interface attachment on the instance.
+        """
+        params = {'NetworkInterfaceId' : network_interface_id,
+                  'InstanceId' : instance_id,
+                  'Deviceindex' : device_index}
+        return self.get_status('AttachNetworkInterface', params, verb='POST')
+
+    def detach_network_interface(self, network_interface_id, force=False):
+        """
+        Detaches a network interface from an instance.
+
+        :type network_interface_id: str
+        :param network_interface_id: The ID of the network interface to detach.
+
+        :type force: bool
+        :param force: Set to true to force a detachment.
+
+        """
+        params = {'NetworkInterfaceId' : network_interface_id}
+        if force:
+            params['Force'] = 'true'
+        return self.get_status('DetachNetworkInterface', params, verb='POST')
+
+    def delete_network_interface(self, network_interface_id):
+        """
+        Delete the specified network interface.
+
+        :type network_interface_id: str
+        :param network_interface_id: The ID of the network interface to delete.
+
+        """
+        params = {'NetworkInterfaceId' : network_interface_id}
+        return self.get_status('DeleteNetworkInterface', params, verb='POST')
 

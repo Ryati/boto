@@ -85,7 +85,7 @@ class BotoServerError(StandardError):
             try:
                 h = handler.XmlHandler(self, self)
                 xml.sax.parseString(self.body, h)
-            except xml.sax.SAXParseException, pe:
+            except (TypeError, xml.sax.SAXParseException), pe:
                 # Remove unparsable message body so we don't include garbage
                 # in exception. But first, save self.body in self.error_message
                 # because occasionally we get error messages from Eucalyptus
@@ -297,6 +297,13 @@ class EC2ResponseError(BotoServerError):
         self._errorResultSet = []
         for p in ('errors'):
             setattr(self, p, None)
+
+class DynamoDBResponseError(BotoServerError):
+
+    def __init__(self, status, reason, data):
+        BotoServerError.__init__(self, status, reason)
+        self.data = data
+        self.body = '%s' % self.data
 
 class EmrResponseError(BotoServerError):
     """

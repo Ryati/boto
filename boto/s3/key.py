@@ -26,11 +26,13 @@ import re
 import rfc822
 import StringIO
 import base64
+import urllib
 import boto.utils
 from boto.exception import BotoClientError
 from boto.provider import Provider
 from boto.s3.user import User
 from boto import UserAgent
+from boto.utils import compute_md5
 try:
     from hashlib import md5
 except ImportError:
@@ -52,6 +54,7 @@ class Key(object):
         self.content_encoding = None
         self.filename = None
         self.etag = None
+        self.is_latest = False
         self.last_modified = None
         self.owner = None
         self.storage_class = 'STANDARD'
@@ -130,7 +133,7 @@ class Key(object):
         else:
             self.delete_marker = False
 
-    def open_read(self, headers=None, query_args=None,
+    def open_read(self, headers=None, query_args='',
                   override_num_retries=None, response_headers=None):
         """
         Open this key for reading
@@ -353,9 +356,14 @@ class Key(object):
 
     def endElement(self, name, value, connection):
         if name == 'Key':
-            self.name = value.encode('utf-8')
+            self.name = value
         elif name == 'ETag':
             self.etag = value
+        elif name == 'IsLatest':
+            if value == 'true':
+                self.is_latest = True
+            else:
+                self.is_latest = False
         elif name == 'LastModified':
             self.last_modified = value
         elif name == 'Size':
@@ -417,7 +425,12 @@ class Key(object):
         return self.bucket.set_canned_acl('public-read', self.name, headers)
 
     def generate_url(self, expires_in, method='GET', headers=None,
+<<<<<<< HEAD
                      query_auth=True, force_http=False, response_headers=None, parameters=None):
+=======
+                     query_auth=True, force_http=False, response_headers=None,
+                     expires_in_absolute=False):
+>>>>>>> 0b266d419189fd8fdaef7abd17aac8683a789d5e
         """
         Generate a URL to access this key.
 
@@ -442,8 +455,12 @@ class Key(object):
                                                    headers, query_auth,
                                                    force_http,
                                                    response_headers,
+<<<<<<< HEAD
                                                    parameters
                                                   )
+=======
+                                                   expires_in_absolute)
+>>>>>>> 0b266d419189fd8fdaef7abd17aac8683a789d5e
 
     def send_file(self, fp, headers=None, cb=None, num_cb=10,
                   query_args=None, chunked_transfer=False):
@@ -573,7 +590,15 @@ class Key(object):
         if headers.has_key('Content-Encoding'):
             self.content_encoding = headers['Content-Encoding']
         if headers.has_key('Content-Type'):
-            self.content_type = headers['Content-Type']
+            # Some use cases need to suppress sending of the Content-Type 
+            # header and depend on the receiving server to set the content
+            # type. This can be achieved by setting headers['Content-Type'] 
+            # to None when calling this method.
+            if headers['Content-Type']:
+                self.content_type = headers['Content-Type']
+            else:
+                # Delete null Content-Type value to skip sending that header.
+                del headers['Content-Type']
         elif self.path:
             self.content_type = mimetypes.guess_type(self.path)[0]
             if self.content_type == None:
@@ -603,19 +628,16 @@ class Key(object):
                  as the first element and the base64 encoded version of the
                  plain digest as the second element.
         """
-        m = md5()
-        fp.seek(0)
-        s = fp.read(self.BufferSize)
-        while s:
-            m.update(s)
-            s = fp.read(self.BufferSize)
-        hex_md5 = m.hexdigest()
-        base64md5 = base64.encodestring(m.digest())
-        if base64md5[-1] == '\n':
-            base64md5 = base64md5[0:-1]
-        self.size = fp.tell()
-        fp.seek(0)
-        return (hex_md5, base64md5)
+        tup = compute_md5(fp)
+        # Returned values are MD5 hash, base64 encoded MD5 hash, and file size.
+        # The internal implementation of compute_md5() needs to return the 
+        # file size but we don't want to return that value to the external 
+        # caller because it changes the class interface (i.e. it might        
+        # break some code) so we consume the third tuple value here and 
+        # return the remainder of the tuple to the caller, thereby preserving 
+        # the existing interface.
+        self.size = tup[2]
+        return tup[0:2]
 
     def set_contents_from_stream(self, fp, headers=None, replace=True,
                                  cb=None, num_cb=10, policy=None,
@@ -1001,7 +1023,7 @@ class Key(object):
             query_args.append('versionId=%s' % version_id)
         if response_headers:
             for key in response_headers:
-                query_args.append('%s=%s' % (key, response_headers[key]))
+                query_args.append('%s=%s' % (key, urllib.quote(response_headers[key])))
         query_args = '&'.join(query_args)
         self.open('r', headers, query_args=query_args,
                   override_num_retries=override_num_retries)
